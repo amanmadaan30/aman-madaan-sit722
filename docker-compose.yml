@@ -1,0 +1,18 @@
+services:
+  customer:
+    build:
+      context: ./services/customer
+      dockerfile: Dockerfile
+    image: ${ACR_LOGIN_SERVER}/customer-service:${IMAGE_TAG}
+
+  product:
+    build:
+      context: ./services/product
+      dockerfile: Dockerfile
+    image: ${ACR_LOGIN_SERVER}/product-service:${IMAGE_TAG}
+
+  order:
+    build:
+      context: ./services/order
+      dockerfile: Dockerfile
+    image: ${ACR_LOGIN_SERVER}/order-service:${IMAGE_TAG}
