@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  customer:
+    build:
+      context: ./backend/customer_service
+      dockerfile: Dockerfile
+    image: ${ACR_LOGIN_SERVER}/customer-service:${IMAGE_TAG}
+    ports:
+      - "8001:8000"
+
+  product:
+    build:
+      context: ./backend/product_service
+      dockerfile: Dockerfile
+    image: ${ACR_LOGIN_SERVER}/product-service:${IMAGE_TAG}
+    ports:
+      - "8002:8000"
+
+  order:
+    build:
+      context: ./backend/order_service
+      dockerfile: Dockerfile
+    image: ${ACR_LOGIN_SERVER}/order-service:${IMAGE_TAG}
+    ports:
+      - "8003:8000"

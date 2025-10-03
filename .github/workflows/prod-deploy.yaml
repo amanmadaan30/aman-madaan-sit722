@@ -1,0 +1,44 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ "main" ]   # Only run when code is merged to main
+
+jobs:
+  deploy_production:
+    runs-on: ubuntu-latest
+    env:
+      RG_NAME: sit722-prod-rg
+      ENV_NAME: sit722-prod-env
+      LOCATION: australiaeast
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure Container Apps extension
+        run: |
+          az extension add --name containerapp --upgrade
+          az provider register --namespace Microsoft.App
+
+      - name: Deploy Customer service (prod)
+        run: |
+          az containerapp update \
+            -g "$RG_NAME" -n customer-service-prod \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer-service:${{ env.IMAGE_TAG }}
+
+      - name: Deploy Product service (prod)
+        run: |
+          az containerapp update \
+            -g "$RG_NAME" -n product-service-prod \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/product-service:${{ env.IMAGE_TAG }}
+
+      - name: Deploy Order service (prod)
+        run: |
+          az containerapp update \
+            -g "$RG_NAME" -n order-service-prod \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/order-service:${{ env.IMAGE_TAG }}
