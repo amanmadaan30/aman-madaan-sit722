@@ -1,5 +1,3 @@
-name: CI Pipeline (Stage 1 - Compose)
-
 on:
   push:
     branches: [ "testing" ]
@@ -12,12 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # If you keep quick API route tests at repo root:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install deps & run tests
         run: |
           if [ -f requirements.txt ]; then
@@ -33,33 +28,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx (for better caching/builds)
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Login to ACR
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.ACR_LOGIN_SERVER }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
-
       - name: Build images (compose)
         run: |
           export ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}
           export IMAGE_TAG=${{ env.IMAGE_TAG }}
           docker compose -f docker-compose.yml build
-
       - name: Push images (compose) with SHA tag
         run: |
           export ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}
           export IMAGE_TAG=${{ env.IMAGE_TAG }}
           docker compose -f docker-compose.yml push
-
       - name: Also push :latest tags (optional)
         run: |
           export ACR_LOGIN_SERVER=${{ secrets.ACR_LOGIN_SERVER }}
-          # retag and push latest for all three
           docker tag $ACR_LOGIN_SERVER/customer-service:${{ env.IMAGE_TAG }} $ACR_LOGIN_SERVER/customer-service:latest
           docker tag $ACR_LOGIN_SERVER/product-service:${{ env.IMAGE_TAG }}  $ACR_LOGIN_SERVER/product-service:latest
           docker tag $ACR_LOGIN_SERVER/order-service:${{ env.IMAGE_TAG }}    $ACR_LOGIN_SERVER/order-service:latest
@@ -67,94 +56,86 @@ jobs:
           docker push $ACR_LOGIN_SERVER/product-service:latest
           docker push $ACR_LOGIN_SERVER/order-service:latest
 
-deploy_staging:
-  name: Stage 2 - Deploy ephemeral staging
-  needs: build_and_push
-  runs-on: ubuntu-latest
-  env:
-    RG_NAME: sit722-staging-${{ github.run_id }}
-    ENV_NAME: sit722-staging-env-${{ github.run_id }}
-    LOCATION: australiaeast
-    IMAGE_TAG: ${{ github.sha }}
-  steps:
-    - uses: actions/checkout@v4
+  deploy_staging:
+    name: Stage 2 - Deploy ephemeral staging
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    env:
+      RG_NAME: sit722-staging-${{ github.run_id }}
+      ENV_NAME: sit722-staging-env-${{ github.run_id }}
+      LOCATION: australiaeast
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Ensure Container Apps extension
+        run: |
+          az extension add --name containerapp --upgrade
+          az provider register --namespace Microsoft.App
+      - name: Create staging RG + environment
+        run: |
+          az group create -n "$RG_NAME" -l "$LOCATION"
+          az containerapp env create -g "$RG_NAME" -n "$ENV_NAME" -l "$LOCATION"
+      - name: Deploy Customer service
+        run: |
+          az containerapp create \
+            -g "$RG_NAME" -n customer-service-staging \
+            --environment "$ENV_NAME" \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer-service:${{ env.IMAGE_TAG }} \
+            --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ secrets.ACR_USERNAME }} \
+            --registry-password ${{ secrets.ACR_PASSWORD }} \
+            --target-port 8000 --ingress external
+      - name: Deploy Product service
+        run: |
+          az containerapp create \
+            -g "$RG_NAME" -n product-service-staging \
+            --environment "$ENV_NAME" \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/product-service:${{ env.IMAGE_TAG }} \
+            --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ secrets.ACR_USERNAME }} \
+            --registry-password ${{ secrets.ACR_PASSWORD }} \
+            --target-port 8000 --ingress external
+      - name: Deploy Order service
+        run: |
+          az containerapp create \
+            -g "$RG_NAME" -n order-service-staging \
+            --environment "$ENV_NAME" \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/order-service:${{ env.IMAGE_TAG }} \
+            --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ secrets.ACR_USERNAME }} \
+            --registry-password ${{ secrets.ACR_PASSWORD }} \
+            --target-port 8000 --ingress external
 
-    - name: Azure Login
-      uses: azure/login@v2
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
+  smoke_test_staging:
+    name: Run smoke tests
+    needs: deploy_staging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Curl /health endpoints
+        run: |
+          RG_NAME="sit722-staging-${{ github.run_id }}"
+          for app in customer-service-staging product-service-staging order-service-staging; do
+            fqdn=$(az containerapp show -g "$RG_NAME" -n $app --query properties.configuration.ingress.fqdn -o tsv)
+            echo "Testing $app at https://$fqdn/health"
+            curl -fsSL "https://$fqdn/health"
+          done
 
-    - name: Ensure Container Apps extension
-      run: |
-        az extension add --name containerapp --upgrade
-        az provider register --namespace Microsoft.App
-
-    - name: Create staging RG + environment
-      run: |
-        az group create -n "$RG_NAME" -l "$LOCATION"
-        az containerapp env create -g "$RG_NAME" -n "$ENV_NAME" -l "$LOCATION"
-
-    - name: Deploy Customer service
-      run: |
-        az containerapp create \
-          -g "$RG_NAME" -n customer-service-staging \
-          --environment "$ENV_NAME" \
-          --image ${{ secrets.ACR_LOGIN_SERVER }}/customer-service:${{ env.IMAGE_TAG }} \
-          --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-          --registry-username ${{ secrets.ACR_USERNAME }} \
-          --registry-password ${{ secrets.ACR_PASSWORD }} \
-          --target-port 8000 --ingress external
-
-    - name: Deploy Product service
-      run: |
-        az containerapp create \
-          -g "$RG_NAME" -n product-service-staging \
-          --environment "$ENV_NAME" \
-          --image ${{ secrets.ACR_LOGIN_SERVER }}/product-service:${{ env.IMAGE_TAG }} \
-          --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-          --registry-username ${{ secrets.ACR_USERNAME }} \
-          --registry-password ${{ secrets.ACR_PASSWORD }} \
-          --target-port 8000 --ingress external
-
-    - name: Deploy Order service
-      run: |
-        az containerapp create \
-          -g "$RG_NAME" -n order-service-staging \
-          --environment "$ENV_NAME" \
-          --image ${{ secrets.ACR_LOGIN_SERVER }}/order-service:${{ env.IMAGE_TAG }} \
-          --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-          --registry-username ${{ secrets.ACR_USERNAME }} \
-          --registry-password ${{ secrets.ACR_PASSWORD }} \
-          --target-port 8000 --ingress external
-
-smoke_test_staging:
-  name: Run smoke tests
-  needs: deploy_staging
-  runs-on: ubuntu-latest
-  steps:
-    - name: Azure Login
-      uses: azure/login@v2
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - name: Curl /health endpoints
-      run: |
-        RG_NAME="sit722-staging-${{ github.run_id }}"
-        for app in customer-service-staging product-service-staging order-service-staging; do
-          fqdn=$(az containerapp show -g "$RG_NAME" -n $app --query properties.configuration.ingress.fqdn -o tsv)
-          echo "Testing $app at https://$fqdn/health"
-          curl -fsSL "https://$fqdn/health"
-        done
-
-destroy_staging:
-  name: Destroy staging
-  needs: smoke_test_staging
-  runs-on: ubuntu-latest
-  steps:
-    - name: Azure Login
-      uses: azure/login@v2
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - name: Delete staging resource group
-      run: az group delete -n sit722-staging-${{ github.run_id }} --yes --no-wait
+  destroy_staging:
+    name: Destroy staging
+    needs: smoke_test_staging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Delete staging resource group
+        run: az group delete -n sit722-staging-${{ github.run_id }} --yes --no-wait
