@@ -2,18 +2,16 @@ name: Deploy to Production
 
 on:
   push:
-    branches: [ "main" ]
-
-env:
-  LOCATION: australiaeast
-  PROD_RG: sit722-prod-rg
-  PROD_ENV: sit722-prod-env
-  IMAGE_TAG: ${{ github.sha }}
+    branches: [ "main" ]   # Only run when code is merged to main
 
 jobs:
-  deploy_prod:
+  deploy_production:
     runs-on: ubuntu-latest
-    environment: production   # add an approval gate here if you want
+    env:
+      RG_NAME: sit722-prod-rg
+      ENV_NAME: sit722-prod-env
+      LOCATION: australiaeast
+      IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,63 +25,20 @@ jobs:
           az extension add --name containerapp --upgrade
           az provider register --namespace Microsoft.App
 
-      # Create apps if they don't exist, else update image
-      - name: Customer - create or update
+      - name: Deploy Customer service (prod)
         run: |
-          if az containerapp show -g "$PROD_RG" -n customer-service-app >/dev/null 2>&1; then
-            az containerapp update \
-              -g "$PROD_RG" -n customer-service-app \
-              --image ${{ secrets.ACR_LOGIN_SERVER }}/customer-service:${{ env.IMAGE_TAG }} \
-              --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }}
-          else
-            az containerapp create \
-              -g "$PROD_RG" -n customer-service-app \
-              --environment "$PROD_ENV" \
-              --image ${{ secrets.ACR_LOGIN_SERVER }}/customer-service:${{ env.IMAGE_TAG }} \
-              --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }} \
-              --target-port 8000 --ingress external
-          fi
+          az containerapp update \
+            -g "$RG_NAME" -n customer-service-prod \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer-service:${{ env.IMAGE_TAG }}
 
-      - name: Product - create or update
+      - name: Deploy Product service (prod)
         run: |
-          if az containerapp show -g "$PROD_RG" -n product-service-app >/dev/null 2>&1; then
-            az containerapp update \
-              -g "$PROD_RG" -n product-service-app \
-              --image ${{ secrets.ACR_LOGIN_SERVER }}/product-service:${{ env.IMAGE_TAG }} \
-              --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }}
-          else
-            az containerapp create \
-              -g "$PROD_RG" -n product-service-app \
-              --environment "$PROD_ENV" \
-              --image ${{ secrets.ACR_LOGIN_SERVER }}/product-service:${{ env.IMAGE_TAG }} \
-              --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }} \
-              --target-port 8000 --ingress external
-          fi
+          az containerapp update \
+            -g "$RG_NAME" -n product-service-prod \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/product-service:${{ env.IMAGE_TAG }}
 
-      - name: Order - create or update
+      - name: Deploy Order service (prod)
         run: |
-          if az containerapp show -g "$PROD_RG" -n order-service-app >/dev/null 2>&1; then
-            az containerapp update \
-              -g "$PROD_RG" -n order-service-app \
-              --image ${{ secrets.ACR_LOGIN_SERVER }}/order-service:${{ env.IMAGE_TAG }} \
-              --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }}
-          else
-            az containerapp create \
-              -g "$PROD_RG" -n order-service-app \
-              --environment "$PROD_ENV" \
-              --image ${{ secrets.ACR_LOGIN_SERVER }}/order-service:${{ env.IMAGE_TAG }} \
-              --registry-server ${{ secrets.ACR_LOGIN_SERVER }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }} \
-              --target-port 8000 --ingress external
-          fi
+          az containerapp update \
+            -g "$RG_NAME" -n order-service-prod \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/order-service:${{ env.IMAGE_TAG }}
